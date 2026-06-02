@@ -696,6 +696,7 @@ class Flux2KleinAPGPipeline(DiffusionPipeline, Flux2LoraLoaderMixin):
         num_inference_steps: int = 50,
         sigmas: list[float] | None = None,
         guidance_scale: float = 5.0,
+        use_apg: bool = True,
         apg_eta: float = 0.0,
         apg_step_radius: float = 15.0,
         apg_momentum: float = -0.5,
@@ -728,6 +729,8 @@ class Flux2KleinAPGPipeline(DiffusionPipeline, Flux2LoraLoaderMixin):
             guidance_scale (`float`, *optional*, defaults to 5.0):
                 Guidance scale for APG. Guidance is enabled by setting `guidance_scale > 1`. For step-wise distilled
                 models, `guidance_scale` is ignored.
+            use_apg (`bool`, *optional*, defaults to `True`):
+                Whether to use APG. If `False`, the pipeline uses standard CFG.
             apg_eta (`float`, *optional*, defaults to 0.0):
                 Weight of the APG parallel component. `0.0` keeps only the orthogonal component, `1.0` restores the
                 full CFG update direction.
@@ -973,50 +976,61 @@ class Flux2KleinAPGPipeline(DiffusionPipeline, Flux2LoraLoaderMixin):
                         )[0]
                     neg_noise_pred = neg_noise_pred[:, : latents.size(1) :]
 
-                    sigma = _expand_to_tensor_dims(
-                        scheduler_sigmas[i], noise_pred_text
-                    )
-                    latents_f32 = latents.to(dtype=torch.float32)
-                    pred_text = latents_f32 - sigma * noise_pred_text.to(
-                        dtype=torch.float32
-                    )
-                    pred_uncond = latents_f32 - sigma * neg_noise_pred.to(
-                        dtype=torch.float32
-                    )
+                    if use_apg:
+                        sigma = _expand_to_tensor_dims(
+                            scheduler_sigmas[i], noise_pred_text
+                        )
+                        latents_f32 = latents.to(dtype=torch.float32)
+                        pred_text = latents_f32 - sigma * noise_pred_text.to(
+                            dtype=torch.float32
+                        )
+                        pred_uncond = latents_f32 - sigma * neg_noise_pred.to(
+                            dtype=torch.float32
+                        )
 
-                    guidance_update = pred_text - pred_uncond
-                    if apg_momentum_buffer is not None and self._apg_momentum != 0.0:
-                        guidance_update = (
-                            guidance_update + self._apg_momentum * apg_momentum_buffer
-                        )
-                    apg_momentum_buffer = guidance_update.detach()
+                        guidance_update = pred_text - pred_uncond
+                        if (
+                            apg_momentum_buffer is not None
+                            and self._apg_momentum != 0.0
+                        ):
+                            guidance_update = (
+                                guidance_update
+                                + self._apg_momentum * apg_momentum_buffer
+                            )
+                        apg_momentum_buffer = guidance_update.detach()
 
-                    if self._apg_step_radius > 0.0:
-                        update_norm = torch.linalg.vector_norm(
-                            guidance_update,
-                            dim=tuple(range(1, guidance_update.ndim)),
-                            keepdim=True,
-                        )
-                        max_norm = torch.as_tensor(
-                            self._apg_step_radius,
-                            device=guidance_update.device,
-                            dtype=guidance_update.dtype,
-                        )
-                        scale = torch.clamp(
-                            max_norm / update_norm.clamp_min(1e-8), max=1.0
-                        )
-                        guidance_update = guidance_update * scale
+                        if self._apg_step_radius > 0.0:
+                            update_norm = torch.linalg.vector_norm(
+                                guidance_update,
+                                dim=tuple(range(1, guidance_update.ndim)),
+                                keepdim=True,
+                            )
+                            max_norm = torch.as_tensor(
+                                self._apg_step_radius,
+                                device=guidance_update.device,
+                                dtype=guidance_update.dtype,
+                            )
+                            scale = torch.clamp(
+                                max_norm / update_norm.clamp_min(1e-8), max=1.0
+                            )
+                            guidance_update = guidance_update * scale
 
-                    update_orthogonal, update_parallel = (
-                        _split_parallel_orthogonal_components(
-                            guidance_update, pred_text
+                        update_orthogonal, update_parallel = (
+                            _split_parallel_orthogonal_components(
+                                guidance_update, pred_text
+                            )
                         )
-                    )
-                    apg_update = update_orthogonal + self._apg_eta * update_parallel
-                    pred_guided = pred_text + (self.guidance_scale - 1.0) * apg_update
-                    noise_pred = ((latents_f32 - pred_guided) / sigma).to(
-                        dtype=noise_pred_text.dtype
-                    )
+                        apg_update = update_orthogonal + self._apg_eta * update_parallel
+                        pred_guided = (
+                            pred_text + (self.guidance_scale - 1.0) * apg_update
+                        )
+                        noise_pred = ((latents_f32 - pred_guided) / sigma).to(
+                            dtype=noise_pred_text.dtype
+                        )
+                    else:
+                        noise_pred = neg_noise_pred + guidance_scale * (
+                            noise_pred_text - neg_noise_pred
+                        )
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype

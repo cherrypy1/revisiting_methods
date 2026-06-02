@@ -681,6 +681,7 @@ class Flux2KleinCFGPPPipeline(DiffusionPipeline, Flux2LoraLoaderMixin):
         num_inference_steps: int = 50,
         sigmas: list[float] | None = None,
         guidance_scale: float = 1.5,
+        use_cfgpp: bool = True,
         num_images_per_prompt: int = 1,
         generator: torch.Generator | list[torch.Generator] | None = None,
         latents: torch.Tensor | None = None,
@@ -711,6 +712,8 @@ class Flux2KleinCFGPPPipeline(DiffusionPipeline, Flux2LoraLoaderMixin):
                 CFG++ interpolation scale. Unlike standard CFG, CFG++ uses smaller scales and keeps the unconditional
                 branch for the renoising component of the FlowMatch Euler update. For step-wise distilled models,
                 `guidance_scale` is ignored.
+            use_cfgpp (`bool`, *optional*, defaults to `True`):
+                Whether to use CFG++. If `False`, the pipeline uses standard CFG.
             height (`int`, *optional*, defaults to self.unet.config.sample_size * self.vae_scale_factor):
                 The height in pixels of the generated image. This is set to 1024 by default for the best results.
             width (`int`, *optional*, defaults to self.unet.config.sample_size * self.vae_scale_factor):
@@ -945,17 +948,22 @@ class Flux2KleinCFGPPPipeline(DiffusionPipeline, Flux2LoraLoaderMixin):
                         )[0]
                     neg_noise_pred = neg_noise_pred[:, : latents.size(1) :]
 
-                    sigma = scheduler_sigmas[i]
-                    sigma_next = scheduler_sigmas[i + 1]
-                    cfgpp_scale = (
-                        guidance_scale
-                        * sigma
-                        * (1.0 - sigma_next)
-                        / (sigma - sigma_next)
-                    ).to(dtype=neg_noise_pred.dtype)
-                    noise_pred = neg_noise_pred + cfgpp_scale * (
-                        noise_pred_text - neg_noise_pred
-                    )
+                    if use_cfgpp:
+                        sigma = scheduler_sigmas[i]
+                        sigma_next = scheduler_sigmas[i + 1]
+                        cfgpp_scale = (
+                            guidance_scale
+                            * sigma
+                            * (1.0 - sigma_next)
+                            / (sigma - sigma_next)
+                        ).to(dtype=neg_noise_pred.dtype)
+                        noise_pred = neg_noise_pred + cfgpp_scale * (
+                            noise_pred_text - neg_noise_pred
+                        )
+                    else:
+                        noise_pred = neg_noise_pred + guidance_scale * (
+                            noise_pred_text - neg_noise_pred
+                        )
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype

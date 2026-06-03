@@ -69,6 +69,11 @@ def _load_source_module(module_name, path):
     return module
 
 
+def load_params_module(method):
+    name = _method_name(method)
+    return _load_source_module(f"_flux2_params_{name}", PARAMS_DIR / f"{name}.py")
+
+
 def load_params(method):
     if isinstance(method, (tuple, dict)):
         return normalize_params(method)
@@ -81,12 +86,18 @@ def load_params(method):
         ):
             return normalize_params(method())
 
-    name = _method_name(method)
-    module = _load_source_module(f"_flux2_params_{name}", PARAMS_DIR / f"{name}.py")
+    module = load_params_module(method)
 
     if hasattr(module, "get_params"):
         return normalize_params(module.get_params())
     return normalize_params((module.BASE_PARAMS, module.SWEEPS))
+
+
+def load_final_configs(method):
+    module = load_params_module(method)
+    if hasattr(module, "get_finals"):
+        return deepcopy(module.get_finals())
+    return deepcopy(getattr(module, "FINALS", []))
 
 
 def load_pipeline_class(method):

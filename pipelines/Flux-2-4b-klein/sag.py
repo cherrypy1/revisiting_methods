@@ -176,6 +176,21 @@ def _attention_with_probs(
     return hidden_states.transpose(1, 2), attention_probs_img
 
 
+def _merge_attention_probs(processors):
+    attention_probs = [
+        processor.attention_probs
+        for processor in processors
+        if processor.attention_probs is not None
+    ]
+
+    if len(attention_probs) == 0:
+        return None
+    if len(attention_probs) == 1:
+        return attention_probs[0]
+
+    return torch.stack(attention_probs, dim=0).mean(dim=0)
+
+
 class Flux2SAGAttnProcessor(Flux2AttnProcessor):
     def __init__(self):
         super().__init__()
@@ -1537,10 +1552,7 @@ class Flux2KleinSAGPipeline(DiffusionPipeline, Flux2LoraLoaderMixin):
                         for processor in sag_processors:
                             processor.do_record = False
 
-                        attention_probs = None
-                        for processor in sag_processors:
-                            if processor.attention_probs is not None:
-                                attention_probs = processor.attention_probs
+                        attention_probs = _merge_attention_probs(sag_processors)
                         if attention_probs is None:
                             raise RuntimeError(
                                 "SAG attention probabilities were not recorded."

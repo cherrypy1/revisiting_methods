@@ -2,10 +2,9 @@ from pathlib import Path
 import re
 from types import ModuleType
 
-import torch
 from PIL import Image, ImageDraw, ImageFont
 
-from inference import load_params as load_method_params
+from inference import load_final_configs, load_params as load_method_params
 
 
 HIDDEN_DISPLAY_PARAMS = {
@@ -79,6 +78,81 @@ def display_params_str(params):
         key: value for key, value in params.items() if key not in HIDDEN_DISPLAY_PARAMS
     }
     return params_str(visible_params)
+
+
+def method_baseline_params(method):
+    method_name = method_output_name(method)
+    baseline_params = {
+        "pag": {"pag_scale": 0.0},
+        "sag": {"sag_scale": 0.0},
+        "seg": {"seg_scale": 0.0},
+        "oseg": {"seg_scale": 0.0, "oseg_scale": 0.0},
+        "apg": {"use_apg": False},
+        "cfgpp": {"use_cfgpp": False},
+        "cfg0s": {"use_cfg_zero_star": False, "use_zero_init": False},
+        "tcfg": {"use_tcfg": False},
+        "cfg": {},
+    }
+    return dict(baseline_params.get(method_name, {}))
+
+
+def sweep_has_baseline_column(sweep, baseline_params):
+    if not baseline_params:
+        return True
+
+    row_name, _ = sweep["row"]
+    col_name, col_values = sweep["col"]
+    fixed = sweep.get("fixed", {})
+
+    if row_name in baseline_params:
+        return False
+
+    for col_value in col_values:
+        params = dict(fixed)
+        params[col_name] = col_value
+        if all(params.get(key) == value for key, value in baseline_params.items()):
+            return True
+
+    return False
+
+
+def normalize_configs(configs):
+    result = []
+    for i, config in enumerate(configs, start=1):
+        if isinstance(config, tuple) and len(config) == 2:
+            label, params = config
+        elif isinstance(config, dict):
+            label = config.get("label", config.get("name"))
+            if "params" in config:
+                params = config["params"]
+            else:
+                params = {
+                    key: value
+                    for key, value in config.items()
+                    if key not in {"label", "name"}
+                }
+        else:
+            raise TypeError("Each config must be a dict or (label, params) tuple.")
+
+        result.append((label or f"config {i}", dict(params)))
+    return result
+
+
+def config_label(label, params):
+    text = display_params_str(params)
+    if text:
+        return f"{label}\n{text}"
+    return str(label)
+
+
+def add_shared_params(target, configs, keys):
+    for key in keys:
+        values = [params[key] for _, params in configs if key in params]
+        if not values or len(values) != len(configs):
+            continue
+        first_value = values[0]
+        if all(value == first_value for value in values[1:]):
+            target.setdefault(key, first_value)
 
 
 def soft_wrap_identifier(name, limit=20):
@@ -170,6 +244,17 @@ def wrap_text(draw, text, font, max_width):
     return lines or [str(text)]
 
 
+def fit_wrapped_text(draw, text, max_width, max_size, min_size, bold, target_lines):
+    for size in range(max_size, min_size - 1, -1):
+        font = get_font(size, bold=bold)
+        lines = wrap_text(draw, text, font, max_width)
+        if len(lines) <= target_lines:
+            return font, lines
+
+    font = get_font(min_size, bold=bold)
+    return font, wrap_text(draw, text, font, max_width)
+
+
 def resize_image(image, size):
     image = image.convert("RGB")
     image.thumbnail((size, size), Image.Resampling.LANCZOS)
@@ -181,26 +266,54 @@ def resize_image(image, size):
     return tile
 
 
-def draw_grid(images, row_labels, col_labels, title, subtitle, tile_size=384):
+def draw_grid(
+    images,
+    row_labels,
+    col_labels,
+    title,
+    subtitle,
+    tile_size=384,
+    left=218,
+    header=50,
+    row_label_lines=6,
+    col_label_lines=2,
+):
     rows = len(images)
     cols = len(images[0])
 
     margin = 14
     gap = 6
-    left = 218
     min_top = 108
-    header = 50
 
     width = margin * 2 + left + cols * tile_size + (cols - 1) * gap
-    title_font = get_font(25, bold=True)
-    text_font = get_font(15)
+    measure = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    title_font, title_lines = fit_wrapped_text(
+        measure,
+        title,
+        width - 2 * margin,
+        max_size=21,
+        min_size=13,
+        bold=True,
+        target_lines=4,
+    )
+    text_font, subtitle_lines = fit_wrapped_text(
+        measure,
+        subtitle,
+        width - 2 * margin,
+        max_size=13,
+        min_size=11,
+        bold=False,
+        target_lines=3,
+    )
     label_font = get_font(16, bold=True)
+    title_line_height = title_font.size + 5 if hasattr(title_font, "size") else 20
+    subtitle_line_height = text_font.size + 4 if hasattr(text_font, "size") else 16
     line_height = 21
 
-    measure = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-    title_lines = wrap_text(measure, title, title_font, width - 2 * margin)[:2]
-    subtitle_lines = wrap_text(measure, subtitle, text_font, width - 2 * margin)[:2]
-    heading_height = len(title_lines) * 30 + len(subtitle_lines) * 19
+    heading_height = (
+        len(title_lines) * title_line_height
+        + len(subtitle_lines) * subtitle_line_height
+    )
     top = max(min_top, heading_height + header + 8)
     height = margin * 2 + top + rows * tile_size + (rows - 1) * gap
 
@@ -210,10 +323,10 @@ def draw_grid(images, row_labels, col_labels, title, subtitle, tile_size=384):
     y = margin
     for line in title_lines:
         draw.text((margin, y), line, fill="#0f172a", font=title_font)
-        y += 30
+        y += title_line_height
     for line in subtitle_lines:
         draw.text((margin, y), line, fill="#475569", font=text_font)
-        y += 19
+        y += subtitle_line_height
 
     x0 = margin + left
     y0 = margin + top - header
@@ -223,7 +336,9 @@ def draw_grid(images, row_labels, col_labels, title, subtitle, tile_size=384):
         draw.rounded_rectangle(
             [x, y0, x + tile_size, y0 + header - gap], radius=5, fill="#e8eef6"
         )
-        label_lines = wrap_text(draw, label, label_font, tile_size - 20)[:2]
+        label_lines = wrap_text(draw, label, label_font, tile_size - 20)[
+            :col_label_lines
+        ]
         for i, line in enumerate(label_lines):
             draw.text(
                 (x + 10, y0 + 10 + i * line_height),
@@ -237,7 +352,7 @@ def draw_grid(images, row_labels, col_labels, title, subtitle, tile_size=384):
         draw.rounded_rectangle(
             [margin, y, margin + left - gap, y + tile_size], radius=5, fill="#e8eef6"
         )
-        label_lines = wrap_text(draw, label, label_font, left - 24)[:6]
+        label_lines = wrap_text(draw, label, label_font, left - 24)[:row_label_lines]
         for i, line in enumerate(label_lines):
             draw.text(
                 (margin + 10, y + 12 + i * line_height),
@@ -258,6 +373,8 @@ def draw_grid(images, row_labels, col_labels, title, subtitle, tile_size=384):
 
 
 def make_generator(pipe, seed):
+    import torch
+
     device = getattr(pipe, "_execution_device", None)
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -268,10 +385,26 @@ def run_sweep(pipe, prompt, method, sweep, base_params, try_id, seed, tile_size)
     row_name, row_values = sweep["row"]
     col_name, col_values = sweep["col"]
     fixed = sweep.get("fixed", {})
+    baseline_params = method_baseline_params(method)
+    add_baseline = not sweep_has_baseline_column(sweep, baseline_params)
 
     images = []
     for row_value in row_values:
         image_row = []
+
+        if add_baseline:
+            params = dict(base_params)
+            params.update(fixed)
+            params[row_name] = row_value
+            params.update(baseline_params)
+
+            image = pipe(
+                prompt=prompt,
+                generator=make_generator(pipe, seed),
+                **params,
+            ).images[0]
+            image_row.append(image)
+
         for col_value in col_values:
             params = dict(base_params)
             params.update(fixed)
@@ -288,6 +421,8 @@ def run_sweep(pipe, prompt, method, sweep, base_params, try_id, seed, tile_size)
 
     row_labels = [param_label(row_name, x, name_limit=16) for x in row_values]
     col_labels = [param_label(col_name, x, name_limit=24) for x in col_values]
+    if add_baseline:
+        col_labels = ["CFG baseline"] + col_labels
     subtitle_parts = [f"seed={seed}"]
     fixed_text = display_params_str(fixed)
     if fixed_text:
@@ -313,7 +448,22 @@ def run_method_grid(
     seed=7,
     tile_size=384,
     method_name=None,
+    finals=False,
 ):
+    if finals:
+        return [
+            run_method_configs_grid(
+                pipe=pipe,
+                method=method,
+                prompts=prompts,
+                try_id=try_id,
+                seed=seed,
+                tile_size=tile_size,
+                method_name=method_name,
+                grid_name="finals",
+            )
+        ]
+
     base_params, sweeps = load_method_params(method)
     output_method = method_output_name(method, method_name)
     saved_paths = []
@@ -334,3 +484,80 @@ def run_method_grid(
             saved_paths.append(path)
 
     return saved_paths
+
+
+def run_method_configs_grid(
+    pipe,
+    method,
+    prompts,
+    configs=None,
+    try_id="2705",
+    seed=7,
+    tile_size=384,
+    method_name=None,
+    grid_name="selected_configs",
+    baseline_params=None,
+    baseline_label="CFG baseline",
+):
+    base_params, _ = load_method_params(method)
+    output_method = method_output_name(method, method_name)
+    if configs is None:
+        configs = load_final_configs(method)
+    selected_configs = normalize_configs(configs)
+    if not selected_configs:
+        raise ValueError(f"No FINALS found for method: {output_method}")
+
+    if baseline_params is None:
+        baseline_params = method_baseline_params(output_method)
+    else:
+        baseline_params = dict(baseline_params)
+
+    add_shared_params(
+        baseline_params,
+        selected_configs,
+        keys=("guidance_scale", "num_inference_steps", "height", "width"),
+    )
+
+    all_configs = [(baseline_label, baseline_params)] + selected_configs
+    images = [[None for _ in all_configs] for _ in prompts]
+
+    # Generate by columns: all prompts for one fixed config, then the next config.
+    for col, (label, config_params) in enumerate(all_configs):
+        params = dict(base_params)
+        params.update(config_params)
+
+        for row, prompt in enumerate(prompts):
+            image = pipe(
+                prompt=prompt,
+                generator=make_generator(pipe, seed),
+                **params,
+            ).images[0]
+            images[row][col] = image
+
+        print(f"done: {output_method} / {label}")
+
+    row_labels = [f"{i}. {prompt}" for i, prompt in enumerate(prompts, start=1)]
+    col_labels = [config_label(label, params) for label, params in all_configs]
+    title = f"{output_method}: selected configurations"
+    subtitle = f"seed={seed}; columns are generated one config at a time"
+
+    grid = draw_grid(
+        images,
+        row_labels,
+        col_labels,
+        title,
+        subtitle,
+        tile_size=tile_size,
+        left=360,
+        header=92,
+        row_label_lines=10,
+        col_label_lines=4,
+    )
+
+    out_dir = Path("outputs") / output_method / str(try_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    out_path = out_dir / f"{grid_name}.jpg"
+    grid.save(out_path, "JPEG", quality=94, optimize=True, progressive=True)
+    print(f"saved: {out_path}")
+    return out_path

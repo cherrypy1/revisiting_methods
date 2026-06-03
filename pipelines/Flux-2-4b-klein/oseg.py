@@ -162,11 +162,13 @@ def _blur_flux2_orthogonal_query(
     key_image = key[:, start_index:end_index]
     query_suffix = query[:, end_index:]
 
-    key_image_norm = F.normalize(key_image, p=2, dim=-1)
+    query_dtype = query_image.dtype
+    key_image_norm = F.normalize(key_image.float(), p=2, dim=-1, eps=1e-6)
+    query_image = query_image.float()
     query_parallel = (query_image * key_image_norm).sum(
         dim=-1, keepdim=True
     ) * key_image_norm
-    query_image = query_image - query_parallel
+    query_image = (query_image - query_parallel).to(query_dtype)
 
     batch_size, _, num_heads, head_dim = query_image.shape
     query_image = query_image.permute(0, 2, 3, 1).reshape(
@@ -177,7 +179,11 @@ def _blur_flux2_orthogonal_query(
         kernel_size = math.ceil(6 * blur_sigma) + 1 - math.ceil(6 * blur_sigma) % 2
         query_image = gaussian_blur_2d(query_image, kernel_size, blur_sigma)
     else:
-        query_image[:] = query_image.mean(dim=(-2, -1), keepdim=True)
+        query_image = query_image.mean(dim=(-2, -1), keepdim=True).expand_as(
+            query_image
+        )
+
+    query_image = torch.nan_to_num(query_image, nan=0.0, posinf=0.0, neginf=0.0)
 
     query_image = query_image.reshape(
         batch_size, num_heads, head_dim, image_seq_len

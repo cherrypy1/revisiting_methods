@@ -1,0 +1,8 @@
+# SD3.5-medium, Adaptive Projected Guidance (paper defaults).
+pipeline: pipelines.sd35.apg
+generation_params:
+  num_inference_steps: 25
+  guidance_scale: 7.0
+  apg_eta: 0.0
+  apg_step_radius: 15.0
+  apg_momentum: -0.5

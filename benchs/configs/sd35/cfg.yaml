@@ -1,0 +1,5 @@
+# SD3.5-medium, vanilla CFG.
+pipeline: pipelines.sd35.cfg
+generation_params:
+  num_inference_steps: 25
+  guidance_scale: 5.5

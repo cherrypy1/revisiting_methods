@@ -1,8 +1,0 @@
-# Cosmos-Predict2-2B, no guidance baseline.
-pipeline: pipelines.cosmos2.no_cfg
-generation_params:
-  height: 1024
-  width: 1024
-  num_inference_steps: 35
-  guidance_scale: 0.0
-  method: no_cfg

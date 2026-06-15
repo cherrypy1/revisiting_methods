@@ -1,5 +1,0 @@
-# SD3.5-medium, no guidance (baseline).
-pipeline: pipelines.sd35.no_cfg
-generation_params:
-  num_inference_steps: 25
-  guidance_scale: 0.0

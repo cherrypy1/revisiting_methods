@@ -1,0 +1,9 @@
+# FLUX.2-klein-4B, OSEG + CFG.
+pipeline: pipelines.flux2_klein_base.oseg
+generation_params:
+  num_inference_steps: 30
+  guidance_scale: 3.0
+  seg_scale: 0.0
+  oseg_scale: 0.5
+  seg_blur_sigma: 10.0
+  seg_applied_layers: ["s4", "s5"]

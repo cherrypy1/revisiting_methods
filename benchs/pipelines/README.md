@@ -1,32 +1,28 @@
 # Pipelines
 
-Two layers live here:
+Custom benchmark pipelines live here by model:
 
-1. **Custom diffusers pipeline implementations** — `pipeline_stable_diffusion_3_*.py`
-   in `sd35/`, and `pipeline_cosmos2_methods.py` in `cosmos2/`. These are the
-   source files that get deployed into the remote patched `diffusers` checkout
-   at `~/diffusers/src/diffusers/pipelines/{stable_diffusion_3,…}/`. After
-   editing, push them out with:
+```text
+pipelines/sd35/
+pipelines/flux2_klein_base/
+pipelines/cosmos2/
+```
 
-       python scripts/sync_pipelines.py --host hse-hpc
+Do not patch the installed `diffusers` package for normal benchmark runs.
+Configs in `configs/<model>/<method>.yaml` point to these local modules.
 
-   Once synced, code that does
-   `from diffusers.pipelines.stable_diffusion_3 import pipeline_stable_diffusion_3_X`
-   picks up the new version.
+Flux2 Klein is loaded like the notebook workflow:
 
-2. **Thin factory modules** — `sd35/<method>.py` and `cosmos2/<method>.py`.
-   Each exposes one function:
+1. load `diffusers.Flux2KleinPipeline` as the base pipeline;
+2. for `cfg`/`no_cfg`, use the base pipeline directly;
+3. for custom methods, load the local class from `pipelines/flux2_klein_base`
+   and call `PipelineClass.from_pipe(base)`.
 
-       def pipeline(device): ...
+SD3.5 and Cosmos2 currently keep their local factory modules:
 
-   that builds the pipeline (loading weights, applying any monkeypatches like
-   `_patch.patch_diffusers_no_bnb` or the `soundfile` stub). The yaml configs
-   in `configs/<model>/<method>.yaml` reference these factories via the
-   `pipeline:` field as a Python module path:
+```python
+def pipeline(device):
+    ...
+```
 
-       pipeline: pipelines.sd35.pag
-       generation_params: {num_inference_steps: 25, guidance_scale: 4.5, ...}
-
-   The loader in `scripts/common.py` imports the module, calls its `pipeline()`
-   factory, and merges `generation_params` from the yaml into the runtime call
-   kwargs.
+The shared loader is `scripts/common.py`.

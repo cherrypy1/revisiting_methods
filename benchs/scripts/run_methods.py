@@ -3,6 +3,7 @@
 Usage:
     python scripts/run_methods.py --methods cfg pag sag \
         --benches geneval oneig dpg \
+        --model flux2_klein_base \
         --run-tag strat27042026 \
         --limits geneval=90 oneig=15 dpg=90 \
         --extra oneig:--grid=1x1 dpg:--pic-num=1
@@ -45,12 +46,13 @@ def parse_extra(items):
     return out
 
 
-def run_one(method, bench, run_tag, limits, extra, dry_run, model="sd35"):
+def run_one(method, bench, run_tag, limits, extra, passthrough, dry_run, model="sd35"):
     cmd = [sys.executable, str(BENCH), method, bench, "--run-tag", run_tag,
            "--model", model]
     if bench in limits:
         cmd += ["--limit", limits[bench]]
     cmd += extra.get(bench, [])
+    cmd += passthrough
     ts = time.strftime("%F %T")
     print(f"[{ts}] === {method} :: {bench} ===  $ {' '.join(cmd)}", flush=True)
     if dry_run:
@@ -62,7 +64,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--methods", nargs="+", required=True)
     p.add_argument("--benches", nargs="+", default=["geneval", "oneig", "dpg"])
-    p.add_argument("--model", default="sd35", choices=["sd35", "cosmos2"])
+    p.add_argument("--model", default="flux2_klein_base", choices=["sd35", "flux2_klein_base", "cosmos2"])
     p.add_argument("--run-tag", required=True)
     p.add_argument("--limits", nargs="*", default=[], help="bench=N pairs")
     p.add_argument("--extra", nargs="*", default=[],
@@ -70,15 +72,20 @@ def main():
     p.add_argument("--keep-going", action="store_true",
                    help="Continue on per-call failure")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("passthrough", nargs=argparse.REMAINDER,
+                   help="Extra args passed to every bench.py call after `--`.")
     args = p.parse_args()
 
     limits = parse_kv(args.limits)
     extra = parse_extra(args.extra)
 
     failures: list[tuple[str, str, int]] = []
+    passthrough = args.passthrough
+    if passthrough and passthrough[0] == "--":
+        passthrough = passthrough[1:]
     for method in args.methods:
         for bench in args.benches:
-            rc = run_one(method, bench, args.run_tag, limits, extra, args.dry_run,
+            rc = run_one(method, bench, args.run_tag, limits, extra, passthrough, args.dry_run,
                          model=args.model)
             if rc != 0:
                 failures.append((method, bench, rc))

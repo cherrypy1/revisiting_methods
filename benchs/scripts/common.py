@@ -1,4 +1,4 @@
-"""Shared utilities for SD3.5 benchmark drivers."""
+"""Shared utilities for benchmark drivers."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ import json
 import os
 import sys
 from dataclasses import dataclass
-from typing import Any, Callable
+from pathlib import Path
+from typing import Any
 
 
 IMAGE_LEVEL_KEYS = {
@@ -24,6 +25,21 @@ IMAGE_LEVEL_KEYS = {
     "batch_size",
     "n_samples",
     "negative_prompt",
+}
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+FLUX2_MODEL_ID = "black-forest-labs/FLUX.2-klein-base-4B"
+FLUX2_METHOD_DIR = PROJECT_ROOT / "pipelines" / "flux2_klein_base"
+FLUX2_CLASS_NAMES = {
+    "apg": "Flux2KleinAPGPipeline",
+    "cfg0s": "Flux2KleinCFG0SPipeline",
+    "cfgpp": "Flux2KleinCFGPPPipeline",
+    "oseg": "Flux2KleinOSEGPipeline",
+    "pag": "Flux2KleinPAGPipeline",
+    "sag": "Flux2KleinSAGPipeline",
+    "seg": "Flux2KleinSegPipeline",
+    "tcfg": "Flux2KleinTCFGPipeline",
 }
 
 
@@ -110,15 +126,68 @@ def _resolve_class(class_name: str):
     raise ValueError(f"Unknown pipeline class: {class_name}")
 
 
+def _load_source_class(module_name: str, path: Path, class_name: str):
+    if not path.is_file():
+        raise FileNotFoundError(f"Pipeline source file not found: {path}")
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return getattr(module, class_name)
+
+
+def _load_flux2_base(device):
+    import torch
+    from diffusers import Flux2KleinPipeline
+
+    kwargs = {"torch_dtype": torch.float16}
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+    if token:
+        kwargs["token"] = token
+
+    device_type = getattr(device, "type", str(device))
+    if device_type == "cuda":
+        kwargs["device_map"] = "cuda"
+
+    pipe = Flux2KleinPipeline.from_pretrained(
+        os.environ.get("FLUX2_MODEL_ID", FLUX2_MODEL_ID),
+        **kwargs,
+    )
+    if "device_map" not in kwargs:
+        pipe = pipe.to(device)
+    return pipe
+
+
+def _load_flux2_pipeline(method: str, device):
+    base = _load_flux2_base(device)
+    if method in {"cfg", "no_cfg"}:
+        return base
+
+    class_name = FLUX2_CLASS_NAMES.get(method)
+    if class_name is None:
+        raise ValueError(f"Unknown Flux2 method: {method}")
+
+    pipeline_class = _load_source_class(
+        f"_bench_flux2_{method}",
+        FLUX2_METHOD_DIR / f"{method}.py",
+        class_name,
+    )
+    return pipeline_class.from_pipe(base)
+
+
 def load_pipeline(pipeline_spec: Any, device):
     import torch
 
     if callable(pipeline_spec):
         return pipeline_spec(device)
 
-    # String form: module path like "pipelines.sd35.cfg" — import the module
-    # and call its `pipeline(device)` factory. Used by yaml configs.
+    # String form is used by yaml configs. Flux2 methods are local source files
+    # applied to the base diffusers Flux2KleinPipeline via from_pipe().
     if isinstance(pipeline_spec, str):
+        flux_prefix = "pipelines.flux2_klein_base."
+        if pipeline_spec.startswith(flux_prefix):
+            return _load_flux2_pipeline(pipeline_spec.removeprefix(flux_prefix), device)
+
         module = importlib.import_module(pipeline_spec)
         factory = getattr(module, "pipeline", None)
         if factory is None:

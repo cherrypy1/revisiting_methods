@@ -1,0 +1,11 @@
+# Cosmos-Predict2-2B, SEG (sigma=10) + CFG (scale=3).
+pipeline: pipelines.cosmos2.seg
+generation_params:
+  height: 1024
+  width: 1024
+  num_inference_steps: 35
+  guidance_scale: 3.0
+  method: seg
+  seg_scale: 3.0
+  seg_blur_sigma: 10.0
+  seg_applied_layers: [8]

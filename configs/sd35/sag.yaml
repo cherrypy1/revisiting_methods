@@ -1,0 +1,7 @@
+# SD3.5-medium, Self-Attention Guidance (Hong et al. 2022) + CFG.
+pipeline: pipelines.sd35.sag
+generation_params:
+  num_inference_steps: 25
+  guidance_scale: 5.0
+  sag_scale: 0.4
+  sag_applied_layers: ["d0"]

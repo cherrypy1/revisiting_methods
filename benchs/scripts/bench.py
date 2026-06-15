@@ -2,9 +2,10 @@
 then (optionally) run that bench's evaluator into the same folder.
 
 Usage:
-    scripts/bench.py <method> <geneval|oneig|dpg> [--skip-eval] [--limit N]
-                     [--run-tag TAG] [--grid 1x1|2x2]  # oneig only
-                     [--pic-num N] [--resolution N]     # dpg only
+    scripts/bench.py <method> <geneval|oneig|dpg> --model flux2_klein_base
+                     [--prompt-set smoke_test|evaluation|full_test]
+                     [--skip-eval] [--limit N] [--run-tag TAG]
+                     [--grid 1x1|2x2] [--pic-num N] [--resolution N]
 """
 
 from __future__ import annotations
@@ -16,13 +17,23 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-# GenEval benchmark assets (detector .pth, mmdet configs, prompts, scorer) live
-# in a sibling repo — like OneIG-Benchmark / ELLA. Override with $GENEVAL_ROOT.
-GENEVAL_ROOT = Path(os.environ.get("GENEVAL_ROOT", str(Path.home() / "geneval-bench")))
+SCRIPTS = PROJECT_ROOT / "scripts"
+PROMPT_ROOT = PROJECT_ROOT / "prompts"
+# External benchmark repos live inside PROJECT_ROOT by default:
+# geneval-bench/, OneIG-Benchmark/, ELLA/. Override with env vars if needed.
+GENEVAL_ROOT = Path(os.environ.get("GENEVAL_ROOT", str(PROJECT_ROOT / "geneval-bench")))
 
 
 def env_path(name, default):
     return Path(os.environ.get(name, default))
+
+
+def first_existing(*paths):
+    for path in paths:
+        path = Path(path)
+        if path.exists():
+            return path
+    return Path(paths[0])
 
 
 def run(cmd, **kw):
@@ -39,12 +50,21 @@ def config_path(method, model="sd35"):
 
 
 def run_geneval(args, cfg, out_root):
-    prompts = env_path("GENEVAL_PROMPTS", GENEVAL_ROOT / "prompts" / "evaluation_metadata.jsonl")
+    prompts = env_path(
+        "GENEVAL_PROMPTS",
+        first_existing(
+            PROMPT_ROOT / args.prompt_set / "geneval.jsonl",
+            PROMPT_ROOT / "geneval_25_per_tag_seed42.jsonl",
+            GENEVAL_ROOT / "prompts" / "evaluation_metadata.jsonl",
+        ),
+    )
     out = out_root / "geneval" / f"{args.method}_{args.run_tag}"
     out.mkdir(parents=True, exist_ok=True)
 
     gen_cmd = [sys.executable, PROJECT_ROOT / "generation" / "diffusers_generate.py",
                prompts, "--config", cfg, "--outdir", out]
+    if args.n_samples:
+        gen_cmd += ["--n_samples", args.n_samples]
     if args.limit:
         gen_cmd += ["--limit", args.limit]
     run(gen_cmd)
@@ -57,16 +77,23 @@ def run_geneval(args, cfg, out_root):
         str(GENEVAL_ROOT / "mmdetection/configs/mask2former/"
                           "mask2former_swin-s-p4-w7-224_8xb2-lsj-50e_coco.py"),
     )
-    run([sys.executable, PROJECT_ROOT / "scripts" / "eval_geneval.py",
+    run([sys.executable, SCRIPTS / "eval" / "eval_geneval.py",
          "--image-dir", out, "--models-dir", models, "--mm-config", mm_config])
 
 
 def run_oneig(args, cfg, out_root):
-    csv = env_path("ONEIG_CSV", Path.home() / "OneIG-Benchmark" / "OneIG-Bench.csv")
+    csv = env_path(
+        "ONEIG_CSV",
+        first_existing(
+            PROMPT_ROOT / args.prompt_set / "oneig.csv",
+            PROMPT_ROOT / "oneig_25_per_category_seed42.csv",
+            PROJECT_ROOT / "OneIG-Benchmark" / "OneIG-Bench.csv",
+        ),
+    )
     out = out_root / "oneig" / args.run_tag
     out.mkdir(parents=True, exist_ok=True)
 
-    gen_cmd = [sys.executable, PROJECT_ROOT / "scripts" / "generate_oneig.py", cfg,
+    gen_cmd = [sys.executable, SCRIPTS / "prompts" / "generate_oneig.py", cfg,
                "--csv", csv, "--out-dir", out, "--model-name", args.method,
                "--grid", args.grid]
     if args.limit:
@@ -75,8 +102,8 @@ def run_oneig(args, cfg, out_root):
 
     if args.skip_eval:
         return
-    oneig_root = env_path("ONEIG_ROOT", Path.home() / "OneIG-Benchmark")
-    eval_cmd = [sys.executable, PROJECT_ROOT / "scripts" / "eval_oneig.py",
+    oneig_root = env_path("ONEIG_ROOT", PROJECT_ROOT / "OneIG-Benchmark")
+    eval_cmd = [sys.executable, SCRIPTS / "eval" / "eval_oneig.py",
                 "--oneig-root", oneig_root, "--image-dir", out,
                 "--model-name", args.method, "--grid", args.grid,
                 "--out-dir", out / "eval" / args.method]
@@ -84,12 +111,28 @@ def run_oneig(args, cfg, out_root):
 
 
 def run_dpg(args, cfg, out_root):
-    prompts_dir = env_path("DPG_PROMPTS", Path.home() / "ELLA" / "dpg_bench" / "prompts")
+    prepared_dpg = PROMPT_ROOT / "dpg_25_per_category_seed42"
+    prompts_dir = env_path(
+        "DPG_PROMPTS",
+        first_existing(
+            PROMPT_ROOT / args.prompt_set / "dpg" / "prompts",
+            prepared_dpg / "prompts",
+            PROJECT_ROOT / "ELLA" / "dpg_bench" / "prompts",
+        ),
+    )
+    csv = env_path(
+        "DPG_CSV",
+        first_existing(
+            PROMPT_ROOT / args.prompt_set / "dpg" / "dpg_bench.csv",
+            prepared_dpg / "dpg_bench.csv",
+            PROJECT_ROOT / "ELLA" / "dpg_bench" / "dpg_bench.csv",
+        ),
+    )
     out = out_root / "dpg" / f"{args.method}_{args.run_tag}"
     images = out / "images"
     images.mkdir(parents=True, exist_ok=True)
 
-    gen_cmd = [sys.executable, PROJECT_ROOT / "scripts" / "generate_dpg.py", cfg,
+    gen_cmd = [sys.executable, SCRIPTS / "prompts" / "generate_dpg.py", cfg,
                "--prompts-dir", prompts_dir, "--out-dir", images,
                "--pic-num", args.pic_num, "--resolution", args.resolution]
     if args.limit:
@@ -98,11 +141,13 @@ def run_dpg(args, cfg, out_root):
 
     if args.skip_eval:
         return
-    dpg_root = env_path("DPG_ROOT", Path.home() / "ELLA")
-    eval_cmd = [sys.executable, PROJECT_ROOT / "scripts" / "eval_dpg.py",
+    dpg_root = env_path("DPG_ROOT", PROJECT_ROOT / "ELLA")
+    eval_cmd = [sys.executable, SCRIPTS / "eval" / "eval_dpg.py",
                 "--dpg-root", dpg_root, "--image-dir", images,
                 "--pic-num", args.pic_num,
                 "--resolution", args.resolution, "--out-dir", out / "eval"]
+    if csv.is_file():
+        eval_cmd += ["--csv", csv]
     run(eval_cmd)
 
 
@@ -111,10 +156,12 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("method")
     p.add_argument("bench", choices=["geneval", "oneig", "dpg"])
-    p.add_argument("--model", default="sd35", choices=["sd35", "cosmos2"])
+    p.add_argument("--model", default="sd35", choices=["sd35", "flux2_klein_base", "cosmos2"])
+    p.add_argument("--prompt-set", default="evaluation", choices=["smoke_test", "evaluation", "full_test"])
     p.add_argument("--run-tag", default=datetime.now().strftime("%d%m%Y"))
     p.add_argument("--out-root", default=None)
     p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--n_samples", type=int, default=4, help="geneval images per prompt")
     p.add_argument("--skip-eval", action="store_true")
     p.add_argument("--grid", default="2x2", choices=["1x1", "2x2"], help="oneig only")
     p.add_argument("--pic-num", type=int, default=4, help="dpg only")
@@ -126,7 +173,7 @@ def main():
     args = parse_args()
     cfg = config_path(args.method, args.model)
     base_out = Path(args.out_root) if args.out_root else PROJECT_ROOT / "outputs"
-    out_root = base_out / args.model if args.model != "sd35" else base_out
+    out_root = base_out / args.model
     out_root.mkdir(parents=True, exist_ok=True)
 
     dispatch = {"geneval": run_geneval, "oneig": run_oneig, "dpg": run_dpg}

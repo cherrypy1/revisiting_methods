@@ -1,4 +1,4 @@
-"""GenEval-layout generator for SD3.5 guidance methods.
+"""GenEval-layout generator for guidance method configs.
 
 Writes ``{outdir}/{NNNNN}/samples/{MMMMM}.png`` + ``.txt`` prompt sidecar
 and ``{outdir}/{NNNNN}/metadata.jsonl`` per prompt, matching the layout

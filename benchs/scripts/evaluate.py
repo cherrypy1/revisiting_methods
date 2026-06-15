@@ -1,90 +1,136 @@
-#!/usr/bin/env python3
-"""
-Wrapper script for evaluate_images.py that automatically finds config files.
-This is useful when mmdet is installed from PyPI without config files.
+"""Mode-aware benchmark orchestrator.
 
-Usage:
-    python scripts/evaluate.py <IMAGE_FOLDER> --outfile results.jsonl --model-path ./models
+This is the public Python entrypoint behind:
 
-This wrapper will:
-1. Try to find the config in mmdetection installation
-2. Fall back to local configs/ directory
-3. Download configs if not found (with user confirmation)
+    bash scripts/smoke_test.sh <model> <bench...> <method...> [-- extra args]
+    bash scripts/evaluation.sh <model> <bench...> <method...> [-- extra args]
+    bash scripts/full_test.sh <model> <bench...> <method...> [-- extra args]
+
+Each (method, bench) pair is delegated to scripts/bench.py. Prompt selection is
+done by --prompt-set and therefore depends on files prepared by
+scripts/prepare_benchmarks.sh.
 """
+
+from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 
 
-def find_config_path() -> str:
-    """Find Mask2Former config file."""
-    
-    # Option 1: Check mmdetection installation
-    try:
-        import mmdet
-        mmdet_config = Path(mmdet.__file__).parent.parent / "configs" / "mask2former" / "mask2former_swin-s-p4-w7-224_lsj_8x2_50e_coco.py"
-        if mmdet_config.exists():
-            return str(mmdet_config)
-    except ImportError:
-        pass
-    
-    # Option 2: Check local configs directory
-    project_root = Path(__file__).parent.parent
-    # mmdetection ships with the external GenEval benchmark repo.
-    geneval_root = Path(os.environ.get("GENEVAL_ROOT", str(Path.home() / "geneval-bench")))
-    local_config = project_root / "configs" / "mask2former" / "mask2former_swin-s-p4-w7-224_lsj_8x2_50e_coco.py"
-    if local_config.exists():
-        return str(local_config)
-
-    # Option 3: Check if mmdetection repo is cloned nearby
-    mmdet_repo = geneval_root / "mmdetection" / "configs" / "mask2former" / "mask2former_swin-s-p4-w7-224_lsj_8x2_50e_coco.py"
-    if mmdet_repo.exists():
-        return str(mmdet_repo)
-
-    # Also try the new naming convention
-    for base in [project_root / "configs", geneval_root / "mmdetection" / "configs"]:
-        new_name = base / "mask2former" / "mask2former_swin-s-p4-w7-224_8xb2-lsj-50e_coco.py"
-        if new_name.exists():
-            return str(new_name)
-    
-    return None
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+BENCH_SCRIPT = PROJECT_ROOT / "scripts" / "bench.py"
+BENCHES = ("geneval", "oneig", "dpg")
+MODES = ("smoke_test", "evaluation", "full_test")
 
 
-def main():
-    # Find config
-    config_path = find_config_path()
-    
-    if config_path is None:
-        print("Error: Could not find Mask2Former config file.", file=sys.stderr)
-        print("", file=sys.stderr)
-        print("Solutions:", file=sys.stderr)
-        print("  1. Run: ./scripts/setup_mmdet_configs.sh", file=sys.stderr)
-        print("  2. Or install mmdetection from source:", file=sys.stderr)
-        print("     git clone https://github.com/open-mmlab/mmdetection.git", file=sys.stderr)
-        print("     cd mmdetection && pip install -v -e .", file=sys.stderr)
-        print("  3. Or specify config manually with --model-config", file=sys.stderr)
+def expand_benches(values: list[str]) -> list[str]:
+    expanded: list[str] = []
+    for value in values:
+        if value == "all":
+            candidates = BENCHES
+        elif value in BENCHES:
+            candidates = (value,)
+        else:
+            raise SystemExit(f"Unknown bench: {value}")
+        for bench in candidates:
+            if bench not in expanded:
+                expanded.append(bench)
+    return expanded
+
+
+def run_one(
+    *,
+    mode: str,
+    model: str,
+    method: str,
+    bench: str,
+    run_tag: str,
+    passthrough: list[str],
+    dry_run: bool,
+) -> int:
+    cmd = [
+        sys.executable,
+        str(BENCH_SCRIPT),
+        method,
+        bench,
+        "--model",
+        model,
+        "--prompt-set",
+        mode,
+        "--out-root",
+        str(PROJECT_ROOT / "outputs" / mode),
+        "--run-tag",
+        run_tag,
+        "--n_samples",
+        "4",
+        "--grid",
+        "2x2",
+        "--pic-num",
+        "4",
+    ]
+    cmd += passthrough
+
+    ts = time.strftime("%F %T")
+    print(f"[{ts}] === {mode} :: {model} :: {method} :: {bench} ===", flush=True)
+    print("$ " + " ".join(str(part) for part in cmd), flush=True)
+    if dry_run:
+        return 0
+    return subprocess.call(cmd)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", required=True, choices=MODES)
+    parser.add_argument("--model", required=True, choices=["sd35", "flux2_klein_base", "cosmos2"])
+    parser.add_argument("--benches", nargs="+", required=True)
+    parser.add_argument("--methods", nargs="+", required=True)
+    parser.add_argument("--run-tag", default=None)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--keep-going", action="store_true")
+    parser.add_argument(
+        "passthrough",
+        nargs=argparse.REMAINDER,
+        help="Extra args passed to every bench.py call after `--`.",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    benches = expand_benches(args.benches)
+    run_tag = args.run_tag or f"{args.mode}_{datetime.now().strftime('%d%m%Y')}"
+
+    passthrough = args.passthrough
+    if passthrough and passthrough[0] == "--":
+        passthrough = passthrough[1:]
+
+    failures: list[tuple[str, str, int]] = []
+    for method in args.methods:
+        for bench in benches:
+            rc = run_one(
+                mode=args.mode,
+                model=args.model,
+                method=method,
+                bench=bench,
+                run_tag=run_tag,
+                passthrough=passthrough,
+                dry_run=args.dry_run,
+            )
+            if rc != 0:
+                failures.append((method, bench, rc))
+                if not args.keep_going:
+                    print(f"[FAIL] {method}:{bench} exit {rc}", file=sys.stderr)
+                    sys.exit(rc)
+
+    if failures:
+        for method, bench, rc in failures:
+            print(f"[FAIL] {method}:{bench} exit {rc}", file=sys.stderr)
         sys.exit(1)
-    
-    print(f"Using config: {config_path}", file=sys.stderr)
-    
-    # Build command
-    project_root = Path(__file__).parent.parent
-    evaluate_script = project_root / "evaluation" / "evaluate_images.py"
-    
-    # Pass through all arguments, adding --model-config if not specified
-    args = sys.argv[1:]
-    
-    if "--model-config" not in args:
-        args = ["--model-config", config_path] + args
-    
-    cmd = [sys.executable, str(evaluate_script)] + args
-    
-    # Run evaluation
-    result = subprocess.run(cmd)
-    sys.exit(result.returncode)
+    print("=== ALL DONE ===")
 
 
 if __name__ == "__main__":

@@ -1,128 +1,177 @@
-# Запуск бенчмарков SD3.5 guidance
+# Benchmark Workflow
 
-Инструкция описывает, как прогнать все реализованные методы guidance для
-`Stable Diffusion 3.5 medium` на трёх бенчмарках: GenEval,
-OneIG-Benchmark (три категории) и DPG-Bench. Все пути/имена — для удалённого
-сервера `hse-hpc`; измените переменные окружения под себя, если нужно.
+Основной запуск делаем интерактивно на GPU-ноде. Установленный `diffusers` не
+патчим: методы лежат в `pipelines/<model>/`, параметры в
+`configs/<model>/<method>.yaml`.
 
-## Подготовка кода
+## 0. Синхронизация
 
-1. Синхронизируйте локальный репозиторий с `~/geneval` на сервере
-   (`rsync -av --exclude outputs --exclude models /home/tiom4eg/prog/geneval/
-   hse-hpc:~/geneval/`).
-2. Убедитесь, что кастомные пайплайны лежат в
-   `~/diffusers/src/diffusers/pipelines/stable_diffusion_3/`. Ожидаемые файлы:
-   `pipeline_stable_diffusion_3_{seg,oseg,apg,cfgpp,cfg0s,tcfg,sag}.py`
-   (PAG берётся из `diffusers.pipelines.pag`).
-3. Для каждого метода конфиг лежит в
-   `~/geneval/generation/configs/sd35/<method>.py` и задаёт класс пайплайна и
-   гипер‑параметры guidance.
-
-## Выделение ресурсов
+На локальной машине из корня репозитория:
 
 ```bash
+rsync -az --delete \
+  --exclude outputs \
+  --exclude prompts \
+  --exclude geneval-bench \
+  --exclude OneIG-Benchmark \
+  --exclude ELLA \
+  --exclude .venv_bench \
+  --exclude __pycache__ \
+  --exclude '*.pyc' \
+  benchs/ hse-hpc:~/cfg_evaluation/
+rsync -az reqs.txt PROGRESS.md hse-hpc:~/cfg_evaluation/
+```
+
+На кластере рабочая папка ожидается такой:
+
+```text
+~/cfg_evaluation/
+  configs/
+  generation/
+  pipelines/
+  scripts/
+  RUN.md
+  outputs/
+  prompts/
+  geneval-bench/
+  OneIG-Benchmark/
+  ELLA/
+  .venv_bench/
+```
+
+## 1. Окружение
+
+```bash
+ssh hse-hpc
 salloc -p normal --gres=gpu:1 -c 4 -t 12:00:00
 ssh <job-id-node>
 module purge && module load gnu14/14.1
 source ~/.venv/bin/activate
-cd ~/geneval
+cd ~/cfg_evaluation
 ```
 
-Либо отправьте batch‑джобу:
+Зависимости:
 
 ```bash
-sbatch --export=ALL,METHOD=cfg,BENCH=geneval scripts/slurm_job.sh
-sbatch --export=ALL,BENCH=geneval scripts/slurm_job.sh all   # все методы
+pip install -U pip setuptools wheel
+pip install -r reqs.txt
+bash scripts/setup/install_benchmark_eval.sh
 ```
 
-## Запуск одного метода на одном бенчмарке
+Если нужен только один evaluator, можно запускать точечно:
 
 ```bash
-bash scripts/bench.sh <method> <geneval|oneig|dpg>
+bash scripts/setup/install_geneval_eval.sh
+bash scripts/setup/install_dpg_eval.sh
+bash scripts/setup/install_oneig_eval.sh
 ```
 
-Пример:
+Все benchmark evaluator deps ставятся в отдельный `~/cfg_evaluation/.venv_bench`.
+Основной `.venv` используется только для генерации. Это изолирует старые
+`requests` от `openmim/openxlab` и `transformers==4.50.0` от OneIG.
+
+В `reqs.txt` уже добавлен PyTorch wheel index для `torch==2.5.1+cu121`.
+В файле не должно быть локального editable `diffusers`, локального `/home/.../mmcv`
+или локального wheel для `bitsandbytes`. `lerobot` выключен, потому что он не
+нужен для этих benchmark-ов и конфликтует с `huggingface_hub==0.36.2`.
+`llm2vec` тоже выключен, потому что требует старый `transformers<=4.44.2`.
+`openxlab/opendatalab/modelscope/openmim` выключены в основном окружении:
+они не нужны для генерации и конфликтуют с современным `requests`. Для evaluator
+они ставятся отдельно в `.venv_bench`.
+Если `bitsandbytes` понадобится, ставь его отдельно.
+
+## 2. Prompt Sets
+
+Один раз скачать benchmark repos и подготовить три фиксированных набора:
 
 ```bash
-bash scripts/bench.sh seg_sigma10_cfg3 geneval
-bash scripts/bench.sh apg              oneig
-bash scripts/bench.sh cfgpp            dpg
+bash scripts/prepare_benchmarks.sh
 ```
 
-Доступные методы (имена файлов из `generation/configs/sd35/` без `.py`):
-`no_cfg`, `cfg`, `seg_sigma10_cfg3`, `seg_sigmainf_cfg3`, `oseg`, `pag`,
-`sag`, `apg`, `cfgpp`, `cfg0s`, `tcfg`.
+Будут созданы:
 
-## Переменные окружения (при необходимости переопределить)
+```text
+prompts/smoke_test/
+  geneval.jsonl      # 1 prompt per tag
+  oneig.csv          # 1 prompt per category
+  dpg/
+prompts/evaluation/
+  geneval.jsonl      # 5 prompts per tag, 30 total
+  oneig.csv          # 6 prompts per category, about 30 total
+  dpg/               # about 30 prompt ids
+prompts/full_test/
+  geneval.jsonl      # symlink to full GenEval metadata
+  oneig.csv          # symlink to full OneIG CSV
+  dpg/               # symlinks to full DPG CSV/prompts
+```
 
-| переменная | дефолт | для чего |
-|---|---|---|
-| `PROJECT_ROOT` | `/home/aaturevich/cfg_evaluation` | корень репозитория (наш код) |
-| `VENV` | `/home/aaturevich/.venv` | venv с diffusers + mmdet |
-| `RUN_TAG` | `$(date +%d%m%Y)` | тег прогона (идёт в имена папок) |
-| `OUT_ROOT` | `$PROJECT_ROOT/outputs` | куда писать результаты |
-| `GENEVAL_ROOT` | `~/geneval-bench` | внешний репо GenEval-бенчмарка (детектор/mmdet/промпты/скорер) |
-| `GENEVAL_PROMPTS` | `$GENEVAL_ROOT/prompts/evaluation_metadata.jsonl` | промпты GenEval |
-| `GENEVAL_MODELS` | `$GENEVAL_ROOT/models` | веса Mask2Former |
-| `GENEVAL_MM_CONFIG` | `$GENEVAL_ROOT/mmdetection/configs/mask2former/…` | py‑конфиг mmdet |
-| `ONEIG_CSV` | `~/OneIG-Benchmark/OneIG-Bench.csv` | каталог промптов OneIG |
-| `ONEIG_ROOT` | `~/OneIG-Benchmark` | репо OneIG |
-| `DPG_PROMPTS` | `~/ELLA/dpg_bench/prompts` | промпты DPG |
-| `DPG_ROOT` | `~/ELLA` | репо ELLA |
+## 3. Запуск
 
-## GenEval
-
-`scripts/bench.sh <method> geneval` делает три шага:
-
-1. `generation/diffusers_generate.py` — рендерит 4 сэмпла на промпт в
-   `outputs/geneval/<method>_<RUN_TAG>/`.
-2. `evaluation/evaluate_images.py` — Mask2Former + CLIP‑цветовой классификатор,
-   пишет `results.jsonl`.
-3. `evaluation/summary_scores.py` — сводная таблица в `summary.txt`.
-
-## OneIG-Benchmark (три категории)
-
-`scripts/bench.sh <method> oneig` генерирует 2x2 сетки и раскладывает их по
-`outputs/oneig/<RUN_TAG>/{object,text,reasoning}/<method>/<id>.webp`.
-Оценка потом делается родным OneIG‑пайплайном:
+Формат у всех режимов одинаковый:
 
 ```bash
-cd ~/OneIG-Benchmark
-# отредактируйте run_overall.sh: IMAGE_DIR=..../outputs/oneig/<RUN_TAG>
-# и MODEL_NAMES=("<method>")
-bash run_overall.sh
+bash scripts/smoke_test.sh <model> <bench...> <method...> [-- extra args]
+bash scripts/evaluation.sh <model> <bench...> <method...> [-- extra args]
+bash scripts/full_test.sh <model> <bench...> <method...> [-- extra args]
 ```
 
-Категории проекта — `General_Object`, `Text_Rendering`, `Knowledge_Reasoning`
-(остальные пропускаются, чтобы сэкономить диск).
+`bench...`: `geneval`, `oneig`, `dpg` или `all`. Всё после списка бенчей до
+`--` считается методами. Во всех режимах генерируется 4 картинки на промпт:
+GenEval `--n_samples 4`, OneIG `2x2`, DPG `--pic-num 4`.
 
-## DPG-Bench
-
-`scripts/bench.sh <method> dpg` генерирует 4 сэмпла на промпт, выкладывает
-их горизонтальным тайлом в `outputs/dpg/<method>_<RUN_TAG>/images/<id>.png`.
-Затем запустите оценку:
+Примеры:
 
 ```bash
-cd ~/ELLA
-bash dpg_bench/dist_eval.sh /home/aaturevich/geneval/outputs/dpg/<method>_<RUN_TAG> 1024
+bash scripts/smoke_test.sh flux2_klein_base all cfg -- --skip-eval
+bash scripts/evaluation.sh flux2_klein_base geneval oneig cfg cfgpp pag sag
+bash scripts/evaluation.sh flux2_klein_base dpg seg_sigma10 seg_sigmainf oseg
+bash scripts/full_test.sh sd35 all cfg cfgpp pag sag
 ```
 
-mPLUG VQA‑модель подтянется автоматически (первая итерация будет долгой).
+Дополнительные аргументы после `--` передаются в каждый запуск `bench.py`:
 
-## Частые грабли
+```bash
+bash scripts/evaluation.sh flux2_klein_base geneval cfg -- --skip-eval
+bash scripts/full_test.sh flux2_klein_base dpg cfg -- --resolution 1024
+```
 
-- **Нет места на диске:** чистите `~/.cache/huggingface` или большие
-  старые папки в `outputs/` перед запуском массового прогона.
-- **`ImportError: is_bitsandbytes_available`:** конфиги уже содержат
-  обходной monkey‑patch через `_patch.py`. Если меняете конфиг — сохраните вызов
-  `patch_diffusers_no_bnb()` в начале.
-- **Старая glibc:** всегда `module purge && module load gnu14/14.1` перед
-  активацией venv.
-- **OOM:** V100 32GB хватает на SD3.5‑medium при 1024x1024 и batch=1; при
-  методах с тремя forward‑пассами (OSEG+CFG) возможны просадки — при нужде
-  уменьшите `H/W` до 768.
+Результаты:
 
-## Обновление `PROGRESS.md`
+```text
+outputs/smoke_test/<model>/
+outputs/evaluation/<model>/
+outputs/full_test/<model>/
+```
 
-По завершении каждого крупного этапа (прогон всех методов на одном
-бенчмарке, обновление оценок) кратко фиксируйте итог в `PROGRESS.md`.
+Итоговые числа руками переносим в `PROGRESS.md`.
+
+## 4. Batch Если Нужно
+
+Основной режим - `salloc`, но `slurm_job.sh` поддерживает тот же интерфейс:
+
+```bash
+sbatch scripts/slurm_job.sh smoke_test flux2_klein_base all cfg
+sbatch scripts/slurm_job.sh evaluation flux2_klein_base geneval dpg cfg pag sag
+sbatch scripts/slurm_job.sh full_test sd35 all cfg
+```
+
+Через env:
+
+```bash
+sbatch --export=ALL,MODE=evaluation,MODEL=flux2_klein_base,BENCHES="geneval dpg",METHODS="cfg pag sag" scripts/slurm_job.sh
+```
+
+## 5. Проверки После Правок
+
+```bash
+bash -n scripts/smoke_test.sh
+bash -n scripts/evaluation.sh
+bash -n scripts/full_test.sh
+bash -n scripts/slurm_job.sh
+bash -n scripts/prepare_benchmarks.sh
+python -m py_compile scripts/evaluate.py scripts/bench.py scripts/run_methods.py scripts/common.py
+python scripts/evaluate.py --mode smoke_test --model flux2_klein_base --benches geneval dpg --methods cfg pag --dry-run
+python scripts/evaluate.py --mode evaluation --model sd35 --benches all --methods cfg --dry-run
+```
+
+После проверок удалить `__pycache__`.

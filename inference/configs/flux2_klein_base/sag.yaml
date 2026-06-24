@@ -1,0 +1,8 @@
+# FLUX.2-klein-4B, Self-Attention Guidance + CFG.
+pipeline: pipelines.flux2_klein_base.sag
+generation_params:
+  num_inference_steps: 30
+  guidance_scale: 5.0
+  sag_scale: 0.4
+  sag_blur_sigma: 3.0
+  sag_applied_layers: ["d0"]

@@ -1,0 +1,15 @@
+# SD3.5-medium, OSEG (orthogonal SEG, Fahim WACV 2026) + CFG.
+# Perturbation blurs ONLY the key-orthogonal component of the query (vs SEG = whole
+# query). Guidance: cond + (gs-1)*(cond-uncond) + oseg_scale*(cond - oseg_pred).
+# oseg_scale = perturbation weight; seg_blur_sigma = sigma for the orthogonal blur
+# (OSEG works at small sigma by design, unlike SEG which needs large sigma). seg_scale
+# unused by oseg (kept 0 so do_seg gate still triggers via oseg_scale).
+pipeline: pipelines.sd35.oseg
+generation_params:
+  method: oseg
+  num_inference_steps: 25
+  guidance_scale: 4.0
+  seg_scale: 0.0
+  oseg_scale: 2.5
+  seg_blur_sigma: 10.0
+  seg_applied_layers: ["d8"]

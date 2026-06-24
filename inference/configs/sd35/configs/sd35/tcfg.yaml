@@ -1,0 +1,8 @@
+# SD3.5-medium, Tangential-damping CFG (Yang et al. 2025).
+pipeline: pipelines.sd35.tcfg
+generation_params:
+  method: tcfg
+  num_inference_steps: 25
+  guidance_scale: 6.0
+  use_tcfg: true
+  tcfg_rank: 1

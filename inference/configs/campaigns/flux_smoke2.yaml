@@ -1,0 +1,17 @@
+# Flux smoke campaign: cfg/pag on one prompt per category for GenEval, OneIG, and DPG.
+name: flux_smoke2
+models: [flux2_klein_base]
+configs: [cfg, pag]
+benchmarks: [geneval, oneig, dpg]
+samples_per_prompt: {geneval: 1, oneig: 1, dpg: 1}
+limit: {geneval: 6, oneig: 3, dpg: 1}
+sample_seed: 0
+seed: 0
+pool:
+  partition: rocky
+  gpu_type: v100
+  gpus_per_job: 1
+  cpus_per_gpu: 6
+  walltime: "2:00:00"
+  max_jobs: 1
+verbose: false

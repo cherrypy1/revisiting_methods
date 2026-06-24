@@ -1,0 +1,8 @@
+# FLUX.2-klein-4B, CFG-Zero*.
+pipeline: pipelines.flux2_klein_base.cfg0s
+generation_params:
+  num_inference_steps: 30
+  guidance_scale: 7.0
+  use_cfg_zero_star: true
+  use_zero_init: true
+  zero_steps: 2

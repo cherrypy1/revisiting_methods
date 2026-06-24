@@ -1,0 +1,16 @@
+{
+    "pipeline": {
+        "class": "StableDiffusionPipeline",
+        "pretrained": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+        "params": {
+            "torch_dtype": "float16"
+        }
+    },
+    "generation_params": {
+        "steps": 50,
+        "scale": 9.0,
+        "H": 512,
+        "W": 512,
+        "n_samples": 4
+    }
+}

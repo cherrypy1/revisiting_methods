@@ -1,0 +1,6 @@
+# FLUX.2-klein-4B, no guidance baseline.
+pipeline: pipelines.flux2_klein_base.no_cfg
+generation_params:
+  num_inference_steps: 30
+  guidance_scale: 0.0
+

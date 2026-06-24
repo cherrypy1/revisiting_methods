@@ -1,0 +1,9 @@
+# SD3.5-medium, SEG (sigma=inf → identity attention) + CFG (scale=3).
+pipeline: pipelines.sd35.seg
+generation_params:
+  method: seg
+  num_inference_steps: 25
+  guidance_scale: 3.0
+  seg_scale: 3.0
+  seg_blur_sigma: 1.0e+10
+  seg_applied_layers: ["d8"]

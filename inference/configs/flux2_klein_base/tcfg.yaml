@@ -1,0 +1,7 @@
+# FLUX.2-klein-4B, Tangential-damping CFG.
+pipeline: pipelines.flux2_klein_base.tcfg
+generation_params:
+  num_inference_steps: 30
+  guidance_scale: 12.0
+  use_tcfg: true
+  tcfg_rank: 1

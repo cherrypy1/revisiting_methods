@@ -1,0 +1,17 @@
+# Tiny Flux smoke campaign: one generated sample for a stratified GenEval subset.
+name: flux_smoke
+models: [flux2_klein_base]
+configs: [cfg, no_cfg, pag, sag, seg_sigma10, apg, cfgpp, cfg0s, tcfg]
+benchmarks: [geneval]
+samples_per_prompt: {geneval: 1}
+limit: {geneval: 6}
+sample_seed: 0
+seed: 0
+pool:
+  partition: rocky
+  gpu_type: v100
+  gpus_per_job: 1
+  cpus_per_gpu: 6
+  walltime: "2:00:00"
+  max_jobs: 1
+verbose: false

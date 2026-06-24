@@ -1,0 +1,9 @@
+# FLUX.2-klein-4B, Adaptive Projected Guidance.
+pipeline: pipelines.flux2_klein_base.apg
+generation_params:
+  num_inference_steps: 30
+  guidance_scale: 12.0
+  use_apg: true
+  apg_eta: 0.0
+  apg_step_radius: 0.0
+  apg_momentum: -0.5

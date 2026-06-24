@@ -1,0 +1,27 @@
+# Full SD3.5 campaign: all 10 guidance methods × all 3 benchmarks, 1 image/prompt.
+# 2249 prompts/method (geneval 553 + oneig 631 + dpg 1065) → 22490 gen items.
+name: sd35_full
+models: [sd35]
+configs:
+  - no_cfg
+  - cfg
+  - cfgpp
+  - cfg0s
+  - apg
+  - tcfg
+  - sag
+  - oseg
+  - pag
+  - seg_sigma10_cfg3
+benchmarks: [geneval, oneig, dpg]
+samples_per_prompt: {geneval: 1, oneig: 1, dpg: 1}
+seed: 0
+sample_seed: 0
+pool:
+  partition: rocky
+  gpu_type: v100
+  gpus_per_job: 1
+  cpus_per_gpu: 6
+  walltime: "30:00:00"
+  max_jobs: 6
+verbose: false

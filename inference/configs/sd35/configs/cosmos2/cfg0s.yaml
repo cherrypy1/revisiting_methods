@@ -1,0 +1,10 @@
+# Cosmos-Predict2-2B, CFG-Zero* (Fang et al. 2025).
+pipeline: pipelines.cosmos2.cfg0s
+generation_params:
+  height: 1024
+  width: 1024
+  num_inference_steps: 35
+  guidance_scale: 6.5
+  method: cfg0s
+  use_zero_init: true
+  zero_steps: 0

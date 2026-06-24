@@ -1,0 +1,17 @@
+# FLUX.2-klein-4B TCFG on a half-size DPG subset.
+name: tcfg_dpg
+models: [flux2_klein_base]
+configs: [tcfg]
+benchmarks: [dpg]
+samples_per_prompt: {dpg: 1}
+limit: {dpg: 533}
+sample_seed: 0
+seed: 0
+pool:
+  partition: rocky
+  gpu_type: v100
+  gpus_per_job: 1
+  cpus_per_gpu: 6
+  walltime: "12:00:00"
+  max_jobs: 1
+verbose: false

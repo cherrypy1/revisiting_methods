@@ -1,0 +1,9 @@
+# Cosmos-Predict2-2B, Tangential-damping CFG.
+pipeline: pipelines.cosmos2.tcfg
+generation_params:
+  height: 1024
+  width: 1024
+  num_inference_steps: 35
+  guidance_scale: 6.0
+  method: tcfg
+  tcfg_rank: 1

@@ -2,6 +2,7 @@ __pycache__/
 .venv/
 venv/
 
-outputs/
-papers/ 
-
+arxiv/
+other/
+a.md
+results/
